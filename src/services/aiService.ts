@@ -141,6 +141,10 @@ export class OpenRouterProvider implements AIProvider {
     this.openai = new OpenAI({
       apiKey,
       baseURL: 'https://openrouter.ai/api/v1',
+      defaultHeaders: {
+        'HTTP-Referer': 'https://github.com/PawanOsman/AIChessBattle',
+        'X-Title': 'AI Chess Battle',
+      },
     });
   }
 
