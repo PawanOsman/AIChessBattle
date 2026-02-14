@@ -1,0 +1,95 @@
+/* Move highlight borders */
+.move-highlight-border {
+  position: absolute;
+  width: 12.5%;
+  height: 12.5%;
+  border: 3px solid;
+  border-radius: 4px;
+  box-sizing: border-box;
+  pointer-events: none;
+  z-index: 10;
+  animation: highlightPulse 0.3s ease-out;
+}
+
+@keyframes highlightPulse {
+  0% {
+    transform: scale(0.8);
+    opacity: 0;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+/* Move arrow SVG container */
+.move-arrow-svg {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 11;
+  animation: arrowFade 0.3s ease-out;
+}
+
+@keyframes arrowFade {
+  0% {
+    opacity: 0;
+  }
+  100% {
+    opacity: 1;
+  }
+}
+
+/* Piece animation - smooth sliding movement */
+.chess-piece {
+  position: relative;
+  transition: none !important;
+  animation: none !important;
+}
+
+/* Animating piece - slides from old position to new */
+.chess-piece-animating {
+  position: absolute !important;
+  z-index: 100 !important;
+  transition: transform 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94) !important;
+  pointer-events: none;
+}
+
+/* When a piece moves, it gets a subtle lift effect */
+.chess-board-container {
+  perspective: 1200px;
+  transform-style: preserve-3d;
+}
+
+/* Square highlights for last move */
+.square-highlight {
+  position: absolute;
+  inset: 0;
+  background-color: rgba(255, 255, 0, 0.3);
+  pointer-events: none;
+  z-index: 5;
+}
+
+/* Selected square highlight */
+.square-selected {
+  position: absolute;
+  inset: 0;
+  background-color: rgba(20, 85, 30, 0.5);
+  pointer-events: none;
+  z-index: 5;
+  box-shadow: inset 0 0 0 2px rgba(20, 85, 30, 0.8);
+}
+
+/* Smooth transitions for all square states */
+.chess-square {
+  transition: background-color 0.15s ease;
+}
+
+/* Add subtle hover effect */
+.chess-square:hover {
+  filter: brightness(1.05);
+}
+

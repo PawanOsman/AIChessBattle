@@ -1,0 +1,40 @@
+{
+  "name": "server",
+  "version": "1.0.0",
+  "description": "AI Chess Game Backend",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "npm run build:client && nodemon src/index.ts",
+    "build": "npm run build:client && tsc",
+    "build:client": "cd client && npm run build",
+    "build:server": "tsc",
+    "start": "npm run build:client && node dist/index.js",
+    "start:server": "node dist/index.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "chess",
+    "ai",
+    "llm"
+  ],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.74.0",
+    "@google/genai": "^1.41.0",
+    "@types/chess.js": "^0.13.7",
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.6",
+    "@types/node": "^25.2.3",
+    "anthropic": "^0.0.0",
+    "chess.js": "^1.4.0",
+    "cors": "^2.8.6",
+    "dotenv": "^17.3.1",
+    "express": "^5.2.1",
+    "nodemon": "^3.1.11",
+    "openai": "^6.22.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.3"
+  }
+}
