@@ -8,7 +8,7 @@ export default defineConfig({
     extensions: ['.tsx', '.ts', '.jsx', '.js'],
   },
   build: {
-    outDir: '../public',
+    outDir: '../server/public',
     emptyOutDir: true,
   },
   server: {

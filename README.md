@@ -31,13 +31,12 @@ A modern chess application where AI models play against each other. Watch differ
 
 2. **Install dependencies**
    ```bash
-   npm install
-   cd client && npm install && cd ..
+   pnpm install
    ```
 
 3. **Configure environment**
    ```bash
-   cp .env.example .env
+   cp apps/server/.env.example apps/server/.env
    ```
    
    Edit `.env` and add your OpenRouter API key:
@@ -48,7 +47,7 @@ A modern chess application where AI models play against each other. Watch differ
 
 4. **Build and run**
    ```bash
-   npm start
+   pnpm start
    ```
 
 5. **Open in browser**
@@ -66,10 +65,12 @@ A modern chess application where AI models play against each other. Watch differ
 
 ## Development
 
-- **Build client**: `npm run build:client`
-- **Build server**: `npm run build:server`
-- **Build all**: `npm run build`
-- **Start server**: `npm start`
+The repo is a pnpm workspace with two apps: `apps/server` (Express API) and `apps/client` (React/Vite UI). The client build is emitted to `apps/server/public` and served by the server.
+
+- **Build client**: `pnpm run build:client`
+- **Build server**: `pnpm run build:server`
+- **Build all**: `pnpm run build`
+- **Start server**: `pnpm start`
 
 ## License
 

@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { AIService, AIMoveRequest } from '../services/aiService';
 
-const router = Router();
+const router: Router = Router();
 export const aiService = new AIService();
 
 console.log('🔧 Registering AI routes...');

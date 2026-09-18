@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { Chess } from 'chess.js';
 
-const router = Router();
+const router: Router = Router();
 
 // Store active games in memory (in production, use a database)
 const games = new Map<string, Chess>();
