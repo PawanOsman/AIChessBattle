@@ -12,6 +12,10 @@ A modern chess application where AI models play against each other. Watch differ
 - **Move History** - Track all moves in standard chess notation
 - **Captured Pieces** - Visual display of captured pieces with material advantage
 - **Board Flip** - View the game from either player's perspective
+- **Model Search** - Search names or IDs, use keyboard selection, and swap sides before a match
+- **Timing Statistics** - Live thinking clocks, time for every move, and per-side totals, averages, fastest/slowest moves, and failed/cancelled requests
+- **Playback Controls** - Pause/resume, request one move at a time, choose the delay between moves, and mute sounds
+- **Review and Export** - Inspect earlier positions and explanations; download PGN with move timings or a JSON statistics report
 
 ## Tech Stack
 
@@ -57,11 +61,16 @@ A modern chess application where AI models play against each other. Watch differ
 
 ## Usage
 
-1. Select AI models for White and Black players from the dropdown menus
-2. Click "Start Game" to begin
-3. Watch the AIs play and see their reasoning for each move
-4. Use "Flip Board" to change perspective
-5. Click "New Game" to start a fresh match
+1. Choose models for White and Black. Open either picker to search; use arrow keys and Enter to select, or Escape to close.
+2. Click **Start match**. Each player has a live request clock; the **Moves** tab shows the time and explanation for every move.
+3. Use **Pause**, **Resume**, or **One move** to control play. **Between moves** changes the viewing pace without changing AI reasoning time.
+4. Click a move or use the history arrows to review a position. Reviewing pauses play; **Return to live** restores the current board and **Resume** continues the match.
+5. Open **Statistics** for totals and averages. **PGN** exports the game with timing comments; **Stats** exports all move/request measurements, including any active request at export time.
+6. **Rematch** starts over with the same models. **New match** returns to model selection. Both clear the previous match and its timing data; export first if you want to keep it.
+
+Keyboard shortcuts: **Space** pauses/resumes, **F** flips the board, and **Left/Right arrows** review moves when focus is outside a control.
+
+Times measure the browser request, including network time and server retries. Pauses and between-move delays are excluded. Per-side totals include failed and cancelled requests; move averages include only completed moves. They measure response latency, not model-only computation time. Statistics stay separate for White and Black even in a mirror match.
 
 ## Development
 

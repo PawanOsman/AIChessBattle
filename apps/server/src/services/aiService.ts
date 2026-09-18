@@ -43,6 +43,7 @@ type ModelInfo = { id: string; name: string };
 type OutputMode = 'schema' | 'json' | 'text';
 interface ModelMetadata {
   id: string;
+  name?: string;
   supported_parameters?: string[];
   architecture?: { output_modalities?: string[] };
   top_provider?: { max_completion_tokens?: number | null };
@@ -271,7 +272,7 @@ export class OpenRouterProvider implements AIProvider {
         (!model.architecture?.output_modalities || model.architecture.output_modalities.includes('text')))
         .map(model => {
           this.metadata.set(model.id, model);
-          return { id: model.id, name: model.id };
+          return { id: model.id, name: typeof model.name === 'string' && model.name.trim() ? model.name : model.id };
         });
       // Prefer structured-output models in the initial menu; search includes all text models.
       this.allModels.sort((a, b) => Number(this.modeFor(b.id) === 'schema') - Number(this.modeFor(a.id) === 'schema') || a.id.localeCompare(b.id));
@@ -288,7 +289,7 @@ export class OpenRouterProvider implements AIProvider {
 
   async searchModels(query: string): Promise<ModelInfo[]> {
     const lowerQuery = query.trim().toLowerCase();
-    return lowerQuery ? this.allModels.filter(model => model.id.toLowerCase().includes(lowerQuery)).slice(0, 50) : this.models;
+    return lowerQuery ? this.allModels.filter(model => model.id.toLowerCase().includes(lowerQuery) || model.name.toLowerCase().includes(lowerQuery)).slice(0, 50) : this.models;
   }
 
   private modeFor(model: string): OutputMode {

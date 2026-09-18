@@ -1,51 +1,54 @@
-import React from 'react';
+import { Icon } from './Icon';
 
 interface GameControlsProps {
   onNewGame: () => void;
   onFlip: () => void;
   onPauseResume: () => void;
+  onStep: () => void;
+  onRematch: () => void;
+  onExport: () => void;
+  onExportStats: () => void;
+  onSoundChange: (enabled: boolean) => void;
+  onDelayChange: (delay: number) => void;
   isPaused: boolean;
+  isThinking: boolean;
   gameOver: boolean;
+  hasMoves: boolean;
+  hasStats: boolean;
+  soundEnabled: boolean;
+  moveDelayMs: number;
 }
 
-export const GameControls: React.FC<GameControlsProps> = ({
-  onNewGame,
-  onFlip,
-  onPauseResume,
-  isPaused,
-  gameOver,
-}) => {
+export function GameControls(props: GameControlsProps) {
   return (
-    <div className="game-controls">
-      <button
-        onClick={onPauseResume}
-        disabled={gameOver}
-        className="control-btn control-btn-secondary"
-        title={isPaused ? 'Continue from the current position' : 'Pause the game and cancel the pending move'}
-      >
-        <span>{isPaused ? 'Resume' : 'Pause'}</span>
-      </button>
-      <button
-        onClick={onNewGame}
-        className="control-btn control-btn-primary"
-        title="Start a new game"
-      >
-        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"/>
-        </svg>
-        <span>New Game</span>
-      </button>
-      
-      <button
-        onClick={onFlip}
-        className="control-btn control-btn-secondary"
-        title="Flip the board orientation"
-      >
-        <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
-          <path d="M18 8.13C18 6.53 17.47 6 15.87 6H13.44C12.41 6 12.01 5.6 12.01 4.57V4.44C12.01 3.41 12.41 3.01 13.44 3.01H15.67C19.67 3.01 21 4.34 21 8.34V17.17H18V8.13ZM10.57 21H8.34C4.34 21 3.01 19.67 3.01 15.67V6.84H6.01V15.87C6.01 17.47 6.54 18 8.14 18H10.57C11.6 18 12 18.4 12 19.43V19.56C12 20.59 11.6 20.99 10.57 20.99V21ZM0.429999 5.83L3.63 1.76C4.3 0.929997 4.76 0.929997 5.43 1.76L8.63 5.86C9.2 6.56 8.96 6.99 8.06 6.99H0.989999C0.0599991 6.99 -0.140001 6.56 0.419999 5.82L0.429999 5.83ZM23.57 18.17L20.37 22.24C19.7 23.07 19.24 23.07 18.57 22.24L15.37 18.14C14.8 17.44 15.04 17.01 15.94 17.01H23.01C23.94 17.01 24.14 17.44 23.58 18.18L23.57 18.17Z"/>
-        </svg>
-        <span>Flip Board</span>
-      </button>
-    </div>
+    <section className="game-controls" aria-label="Game controls">
+      <div className="controls-play">
+        <button onClick={props.onPauseResume} disabled={props.gameOver} className="control-btn control-btn-primary" title="Pause or resume (Space)">
+          <Icon name={props.isPaused ? 'play' : 'pause'} />{props.isPaused ? 'Resume' : 'Pause'}
+        </button>
+        <button onClick={props.onStep} disabled={!props.isPaused || props.isThinking || props.gameOver} className="control-btn" title="Request one move while paused">
+          <Icon name="step" />One move
+        </button>
+      </div>
+      <div className="playback-preferences">
+        <label htmlFor="move-delay">Between moves</label>
+        <select id="move-delay" value={props.moveDelayMs} onChange={event => props.onDelayChange(Number(event.target.value))}>
+          <option value={0}>No delay</option><option value={500}>0.5 seconds</option>
+          <option value={1500}>1.5 seconds</option><option value={3000}>3 seconds</option>
+        </select>
+        <button className="icon-button" onClick={() => props.onSoundChange(!props.soundEnabled)} aria-label={props.soundEnabled ? 'Mute sounds' : 'Enable sounds'} aria-pressed={props.soundEnabled} title={props.soundEnabled ? 'Mute sounds' : 'Enable sounds'}>
+          <Icon name={props.soundEnabled ? 'volume' : 'mute'} />
+        </button>
+      </div>
+      <div className="controls-tools">
+        <button onClick={props.onFlip} className="control-btn" title="Flip board (F)"><Icon name="flip" />Flip</button>
+        <button onClick={props.onExport} disabled={!props.hasMoves} className="control-btn" title="Download PGN with move times"><Icon name="download" />PGN</button>
+        <button onClick={props.onExportStats} disabled={!props.hasStats} className="control-btn" title="Download game statistics as JSON"><Icon name="download" />Stats</button>
+      </div>
+      <div className="controls-secondary">
+        <button onClick={props.onNewGame} className="text-button"><Icon name="plus" />New match</button>
+        <button onClick={props.onRematch} className="text-button"><Icon name="repeat" />Rematch</button>
+      </div>
+    </section>
   );
-};
+}

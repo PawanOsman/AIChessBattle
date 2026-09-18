@@ -3,6 +3,7 @@ import { Chess } from 'chess.js';
 import { apiService, type GameState, type AIMoveRequest } from '../services/api';
 import { AIRequestTracker } from '../utils/aiRequestTracker';
 import { cloneWithHistory } from '../utils/chessPosition';
+import { GameTelemetry, type GameTelemetrySnapshot, type MoveRecord, type AIRequestRecord } from '../utils/gameTelemetry';
 import { chessSounds } from '../utils/sounds';
 
 export interface AISettings {
@@ -23,20 +24,44 @@ export const useChessGame = () => {
   const [selectedSquare, setSelectedSquare] = useState<string | null>(null);
   const [lastReasoning, setLastReasoning] = useState<string | null>(null);
   const [forfeitResult, setForfeitResult] = useState<{ result: string; reason: string } | null>(null);
+  const [telemetry, setTelemetry] = useState<GameTelemetrySnapshot>({
+    moveRecords: [], requestRecords: [], activeRequest: null,
+  });
+  const [moveDelayMs, updateMoveDelayMs] = useState(500);
+  const [soundEnabled, updateSoundEnabled] = useState(() => chessSounds.isEnabled());
 
   const gameRef = useRef(game);
   const gameActiveRef = useRef(false);
   const aiSettingsRef = useRef<AISettings | null>(null);
   const requestsRef = useRef(new AIRequestTracker());
+  const telemetryRef = useRef(new GameTelemetry());
 
   useEffect(() => {
     const requests = requestsRef.current;
-    return () => requests.cancel();
+    const recorder = telemetryRef.current;
+    return () => {
+      requests.cancel();
+      recorder.reset();
+    };
   }, []);
 
   const cancelAIMove = useCallback(() => {
     requestsRef.current.cancel();
+    const activeRequest = telemetryRef.current.getSnapshot().activeRequest;
+    if (activeRequest) {
+      const snapshot = telemetryRef.current.finish(activeRequest, 'cancelled');
+      if (snapshot) setTelemetry(snapshot);
+    }
     setIsThinking(false);
+  }, []);
+
+  const setMoveDelayMs = useCallback((value: number) => {
+    if (Number.isFinite(value)) updateMoveDelayMs(Math.max(0, Math.min(10_000, value)));
+  }, []);
+
+  const setSoundEnabled = useCallback((enabled: boolean) => {
+    chessSounds.setEnabled(enabled);
+    updateSoundEnabled(enabled);
   }, []);
 
   const pauseGame = useCallback(() => {
@@ -47,6 +72,7 @@ export const useChessGame = () => {
 
   const initializeGame = useCallback((settings: AISettings | null) => {
     cancelAIMove();
+    setTelemetry(telemetryRef.current.reset());
     const nextGame = new Chess();
     gameRef.current = nextGame;
     aiSettingsRef.current = settings;
@@ -67,8 +93,8 @@ export const useChessGame = () => {
     initializeGame(null);
   }, [initializeGame]);
 
-  const applyMove = useCallback((from: string, to: string, promotion?: string) => {
-    if (!gameActiveRef.current) return false;
+  const applyMove = useCallback((from: string, to: string, promotion?: string, allowPaused = false) => {
+    if (!gameActiveRef.current && !allowPaused) return null;
 
     // Use a fresh React state value without losing the repetition/history data.
     const nextGame = cloneWithHistory(gameRef.current);
@@ -90,7 +116,7 @@ export const useChessGame = () => {
       setGameActive(false);
       chessSounds.playGameEnd();
     }
-    return true;
+    return move;
   }, []);
 
   const makeMove = useCallback(async (from: string, to: string, promotion?: string) => {
@@ -99,7 +125,7 @@ export const useChessGame = () => {
     setError(null);
     setIsLoading(true);
     try {
-      return applyMove(from, to, promotion);
+      return Boolean(applyMove(from, to, promotion));
     } catch (err) {
       pauseGame();
       setError(err instanceof Error ? err.message : 'Failed to make move');
@@ -109,24 +135,40 @@ export const useChessGame = () => {
     }
   }, [applyMove, cancelAIMove, pauseGame]);
 
-  const doAIMove = useCallback(async () => {
+  const doAIMove = useCallback(async (singleStep = false) => {
     const settings = aiSettingsRef.current;
     const position = gameRef.current;
-    if (!settings || !gameActiveRef.current || position.isGameOver()) return;
+    if (!settings || position.isGameOver() || forfeitResult
+      || (singleStep ? gameActiveRef.current : !gameActiveRef.current)) return false;
 
     const pending = requestsRef.current.begin(position.fen());
-    if (!pending) return;
+    if (!pending) return false;
+    const currentTurn = position.turn();
+    const model = currentTurn === 'w' ? settings.whiteModel : settings.blackModel;
+    const timedRequest = telemetryRef.current.begin(currentTurn, model);
+    if (!timedRequest) {
+      requestsRef.current.finish(pending);
+      return false;
+    }
+    setTelemetry(telemetryRef.current.getSnapshot());
     setIsThinking(true);
     setError(null);
+    setInvalidMove(null);
 
-    const isCurrent = () => gameActiveRef.current && requestsRef.current.isCurrent(pending, gameRef.current.fen());
+    const isCurrent = () => (singleStep || gameActiveRef.current)
+      && requestsRef.current.isCurrent(pending, gameRef.current.fen());
+    const finish = (status: AIRequestRecord['status'], move?: Omit<MoveRecord, 'durationMs'>) => {
+      if (!requestsRef.current.finish(pending)) return;
+      const snapshot = telemetryRef.current.finish(timedRequest, status, move);
+      if (snapshot) setTelemetry(snapshot);
+      setIsThinking(false);
+    };
 
     try {
-      const currentTurn = position.turn();
       const legalMoves = position.moves({ verbose: true }).map(move => move.from + move.to + (move.promotion || ''));
       const request: AIMoveRequest = {
         provider: 'openrouter',
-        model: currentTurn === 'w' ? settings.whiteModel : settings.blackModel,
+        model,
         fen: pending.fen,
         moveHistory: position.history({ verbose: true }).map(move => move.from + move.to + (move.promotion || '')),
         playerColor: currentTurn,
@@ -134,7 +176,7 @@ export const useChessGame = () => {
       };
 
       const response = await apiService.getAIMove(request, pending.controller.signal);
-      if (!isCurrent()) return;
+      if (!isCurrent()) return false;
 
       // Exact UCI matching requires the promotion suffix and rejects partial moves.
       if (!response.success || !legalMoves.includes(response.move)) {
@@ -144,25 +186,35 @@ export const useChessGame = () => {
         throw new Error('The AI returned an illegal move. Resume to try this turn again.');
       }
 
-      if (applyMove(response.move.slice(0, 2), response.move.slice(2, 4), response.move[4])) {
-        setLastReasoning(response.reasoning || null);
+      const move = applyMove(response.move.slice(0, 2), response.move.slice(2, 4), response.move[4], singleStep);
+      if (!move) {
+        finish('cancelled');
+        return false;
       }
+      finish('completed', {
+        ply: request.moveHistory.length + 1, color: currentTurn, model,
+        actualModel: response.model, san: move.san, uci: response.move,
+        fenBefore: pending.fen, fenAfter: gameRef.current.fen(), reasoning: response.reasoning,
+      });
+      setLastReasoning(response.reasoning || null);
+      return true;
     } catch (err) {
       // Reset, pause, resignation, or a newer turn owns the UI now.
-      if (!isCurrent()) return;
+      if (!isCurrent()) return false;
+      finish('failed');
       pauseGame();
       setError(err instanceof Error ? err.message : 'Failed to get AI move');
-    } finally {
-      // A late completion must not clear the next game's thinking indicator.
-      if (requestsRef.current.finish(pending)) setIsThinking(false);
+      return false;
     }
-  }, [applyMove, pauseGame]);
+  }, [applyMove, pauseGame, forfeitResult]);
+
+  const stepAIMove = useCallback(() => doAIMove(true), [doAIMove]);
 
   useEffect(() => {
     if (!gameActive || !aiSettingsRef.current || game.isGameOver()) return;
-    const timer = setTimeout(() => { void doAIMove(); }, 500);
+    const timer = setTimeout(() => { void doAIMove(); }, moveDelayMs);
     return () => clearTimeout(timer);
-  }, [gameActive, game, doAIMove]);
+  }, [gameActive, game, doAIMove, moveDelayMs]);
 
   const startAIVsAIGame = useCallback(async (settings: AISettings) => {
     if (!settings.whiteModel.trim() || !settings.blackModel.trim()) {
@@ -190,6 +242,7 @@ export const useChessGame = () => {
 
   const resetGame = useCallback(() => {
     pauseGame();
+    setTelemetry(telemetryRef.current.reset());
     const nextGame = new Chess();
     gameRef.current = nextGame;
     aiSettingsRef.current = null;
@@ -225,6 +278,7 @@ export const useChessGame = () => {
   return {
     gameId, game, gameState, isLoading, isThinking, gameActive, error,
     lastMove, invalidMove, selectedSquare, lastReasoning,
+    ...telemetry, moveDelayMs, setMoveDelayMs, soundEnabled, setSoundEnabled, stepAIMove,
     startGame, makeMove, getAndExecuteAIMove: doAIMove, startAIVsAIGame,
     pauseGame, resumeGame, resign, resetGame, handleSquareSelect, isGameOver, getGameResult,
   };

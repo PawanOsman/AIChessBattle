@@ -140,11 +140,16 @@ class ApiService {
     return data.providers;
   }
 
-  async searchModels(query: string): Promise<{ id: string; name: string }[]> {
-    const response = await fetch(`${API_BASE_URL}/ai/models/search?q=${encodeURIComponent(query)}`);
+  async searchModels(query: string, signal?: AbortSignal): Promise<{ id: string; name: string }[]> {
+    const response = await fetch(`${API_BASE_URL}/ai/models/search?q=${encodeURIComponent(query)}`, { signal });
     if (!response.ok) throw new Error(`Failed to search models: ${response.statusText}`);
-    const data = await response.json();
-    return data.models;
+    const data: unknown = await response.json();
+    if (!isRecord(data) || !Array.isArray(data.models) || data.models.some(model =>
+      !isRecord(model) || typeof model.id !== 'string' || !model.id.trim()
+      || typeof model.name !== 'string' || !model.name.trim())) {
+      throw new Error('The server returned an invalid model catalog.');
+    }
+    return data.models as { id: string; name: string }[];
   }
 
   async getAIMove(request: AIMoveRequest, signal?: AbortSignal): Promise<AIMoveResponse> {

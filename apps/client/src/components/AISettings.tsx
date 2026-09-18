@@ -1,6 +1,8 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import { useMemo, useState } from 'react';
 import type { ProviderInfo } from '../services/api';
-import { apiService } from '../services/api';
+import { ModelPicker } from './ModelPicker';
+import type { ModelOption } from '../utils/modelUtils';
+import './model-picker.css';
 
 interface AISettingsState {
   whiteModel: string;
@@ -11,166 +13,55 @@ interface AISettingsProps {
   settings: AISettingsState;
   onSettingsChange: (settings: AISettingsState) => void;
   providers: ProviderInfo[];
+  disabled?: boolean;
 }
 
-export const AISettings: React.FC<AISettingsProps> = ({
-  settings,
-  onSettingsChange,
-  providers,
-}) => {
-  const [local, setLocal] = useState(settings);
-  const [whiteSearchQuery, setWhiteSearchQuery] = useState('');
-  const [blackSearchQuery, setBlackSearchQuery] = useState('');
-  const [whiteSearchResults, setWhiteSearchResults] = useState<{ id: string; name: string }[]>([]);
-  const [blackSearchResults, setBlackSearchResults] = useState<{ id: string; name: string }[]>([]);
-  const [whiteSearching, setWhiteSearching] = useState(false);
-  const [blackSearching, setBlackSearching] = useState(false);
-
-  useEffect(() => {
-    setLocal(settings);
-  }, [settings]);
-
-  const handleChange = (field: keyof AISettingsState, value: string) => {
-    const updated = { ...local, [field]: value };
-    setLocal(updated);
-    onSettingsChange(updated);
+export function AISettings({ settings, onSettingsChange, providers, disabled = false }: AISettingsProps) {
+  // Remember the actual names returned by search, including after swapping sides.
+  const [chosenModels, setChosenModels] = useState<Record<string, ModelOption>>({});
+  const provider = providers.find(item => item.id === 'openrouter');
+  const models = useMemo(() => provider?.models ?? [], [provider]);
+  const selectModel = (field: keyof AISettingsState, model: ModelOption) => {
+    setChosenModels(current => ({ ...current, [model.id]: model }));
+    onSettingsChange({ ...settings, [field]: model.id });
   };
-
-  const getModels = (searchResults?: { id: string; name: string }[], selectedModelId?: string) => {
-    let models: { id: string; name: string }[] = [];
-    
-    if (searchResults && searchResults.length > 0) {
-      models = searchResults;
-    } else {
-      const openrouter = providers.find(p => p.id === 'openrouter');
-      models = openrouter?.models || [];
-    }
-    
-    // If a model is selected but not in the current list, add it
-    if (selectedModelId && !models.some(m => m.id === selectedModelId)) {
-      // Try to find it in all models (search with empty query to get all)
-      models = [{ id: selectedModelId, name: selectedModelId }, ...models];
-    }
-    
-    return models;
-  };
-
-  const searchModels = useCallback(async (query: string, isWhite: boolean) => {
-    
-    if (isWhite) {
-      setWhiteSearching(true);
-    } else {
-      setBlackSearching(true);
-    }
-
-    try {
-      const results = await apiService.searchModels(query);
-      if (isWhite) {
-        setWhiteSearchResults(results);
-      } else {
-        setBlackSearchResults(results);
-      }
-    } catch (error) {
-      console.error('Failed to search models:', error);
-    } finally {
-      if (isWhite) {
-        setWhiteSearching(false);
-      } else {
-        setBlackSearching(false);
-      }
-    }
-  }, []);
-
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      if (whiteSearchQuery) {
-        searchModels(whiteSearchQuery, true);
-      } else {
-        setWhiteSearchResults([]);
-      }
-    }, 300);
-    return () => clearTimeout(timer);
-  }, [whiteSearchQuery, searchModels]);
-
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      if (blackSearchQuery) {
-        searchModels(blackSearchQuery, false);
-      } else {
-        setBlackSearchResults([]);
-      }
-    }, 300);
-    return () => clearTimeout(timer);
-  }, [blackSearchQuery, searchModels]);
-
+  const sameModel = Boolean(settings.whiteModel && settings.whiteModel === settings.blackModel);
 
   return (
-    <div className="ai-settings">
-      <h3>AI Configuration</h3>
-      
-      <div className="settings-columns">
-        <div className="ai-column">
-          <h4>White</h4>
-          
-          <div className="setting-row">
-            <label>Search Models</label>
-            <input
-              type="text"
-              placeholder="Search 400+ models..."
-              value={whiteSearchQuery}
-              onChange={(e) => setWhiteSearchQuery(e.target.value)}
-              className="search-input"
-            />
-            {whiteSearching && <span className="searching">Searching...</span>}
-          </div>
-
-          <div className="setting-row">
-            <label>Model</label>
-            <select
-              value={local.whiteModel}
-              onChange={(e) => handleChange('whiteModel', e.target.value)}
-            >
-              {getModels(whiteSearchResults, local.whiteModel).map(m => (
-                <option key={m.id} value={m.id}>{m.name}</option>
-              ))}
-            </select>
-          </div>
-        </div>
-
-        <div className="ai-column">
-          <h4>Black</h4>
-          
-          <div className="setting-row">
-            <label>Search Models</label>
-            <input
-              type="text"
-              placeholder="Search 400+ models..."
-              value={blackSearchQuery}
-              onChange={(e) => setBlackSearchQuery(e.target.value)}
-              className="search-input"
-            />
-            {blackSearching && <span className="searching">Searching...</span>}
-          </div>
-
-          <div className="setting-row">
-            <label>Model</label>
-            <select
-              value={local.blackModel}
-              onChange={(e) => handleChange('blackModel', e.target.value)}
-            >
-              {getModels(blackSearchResults, local.blackModel).map(m => (
-                <option key={m.id} value={m.id}>{m.name}</option>
-              ))}
-            </select>
-          </div>
-        </div>
+    <section className="ai-settings" aria-labelledby="ai-settings-title">
+      <div className="model-settings-heading">
+        <h3 id="ai-settings-title">The matchup</h3>
+        <button
+          type="button"
+          className="model-swap"
+          title="Swap White and Black models"
+          aria-label="Swap White and Black models"
+          disabled={disabled || !settings.whiteModel || !settings.blackModel || sameModel}
+          onClick={() => onSettingsChange({ whiteModel: settings.blackModel, blackModel: settings.whiteModel })}
+        >
+          <svg width="14" height="14" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+            <path d="M3 6h14m0 0-3-3m3 3-3 3M17 14H3m0 0 3 3m-3-3 3-3" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+          Swap
+        </button>
       </div>
-
-      {providers.length === 0 && (
-        <div className="warning">
-          <p>No AI providers available. Configure API keys in .env</p>
-        </div>
-      )}
-    </div>
+      <div className="model-settings-pickers">
+        {(['whiteModel', 'blackModel'] as const).map(field => (
+          <ModelPicker
+            key={field}
+            side={field === 'whiteModel' ? 'White' : 'Black'}
+            selectedId={settings[field]}
+            selectedModel={chosenModels[settings[field]]}
+            models={models}
+            providerName="OpenRouter"
+            disabled={disabled || !provider}
+            onSelect={model => selectModel(field, model)}
+          />
+        ))}
+      </div>
+      <p className="model-settings-note">
+        {sameModel ? 'Mirror match · Same model, both sides.' : 'Choose a model for each side to compare their play.'}
+      </p>
+    </section>
   );
-};
+}

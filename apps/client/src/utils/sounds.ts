@@ -69,6 +69,12 @@ class ChessSounds {
 
   setEnabled(enabled: boolean) {
     this.enabled = enabled;
+    if (!enabled) {
+      for (const sound of this.sounds.values()) {
+        sound.pause();
+        sound.currentTime = 0;
+      }
+    }
   }
 
   isEnabled() {
