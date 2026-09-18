@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { Chessboard } from './components/ChessBoard/index';
 import { customPieces } from './components/ChessBoard/customPieces';
 import { GameControls } from './components/GameControls';
@@ -30,6 +30,8 @@ function App() {
     invalidMove,
     lastReasoning,
     startAIVsAIGame,
+    pauseGame,
+    resumeGame,
     resetGame,
     isGameOver,
     getGameResult,
@@ -61,9 +63,10 @@ function App() {
   };
 
   const handleStartAIGame = async () => {
-    setShowSettings(false);
-    setShowResultDialog(true);
-    await startAIVsAIGame(aiSettings);
+    if (await startAIVsAIGame(aiSettings)) {
+      setShowSettings(false);
+      setShowResultDialog(true);
+    }
   };
 
   const handleFlip = () => {
@@ -75,29 +78,22 @@ function App() {
   };
 
   const gameResult = isGameOver() ? getGameResult() : null;
+  const moveHistory = useMemo(() => game.history(), [game]);
+  const capturedPieces = useMemo(() => {
+    const captures: Record<'w' | 'b', string[]> = { w: [], b: [] };
+    for (const move of game.history({ verbose: true })) {
+      if (move.captured) captures[move.color].push(move.captured);
+    }
+    const pieceOrder: Record<string, number> = { p: 1, n: 2, b: 3, r: 4, q: 5 };
+    captures.w.sort((a, b) => pieceOrder[a] - pieceOrder[b]);
+    captures.b.sort((a, b) => pieceOrder[a] - pieceOrder[b]);
+    return captures;
+  }, [game]);
 
   const getModelLabel = (modelId: string) => {
     const openrouter = providers.find(p => p.id === 'openrouter');
     const m = openrouter?.models.find(m => m.id === modelId);
     return m?.name || modelId;
-  };
-
-  const getCapturedPieces = (color: 'w' | 'b') => {
-    const history = game.history({ verbose: true });
-    const captured: string[] = [];
-    
-    for (const move of history) {
-      if (move.captured && move.color === color) {
-        // This color captured opponent's piece
-        captured.push(move.captured);
-      }
-    }
-    
-    // Sort pieces by value: p, n, b, r, q
-    const pieceOrder: Record<string, number> = { p: 1, n: 2, b: 3, r: 4, q: 5 };
-    captured.sort((a, b) => pieceOrder[a] - pieceOrder[b]);
-    
-    return captured;
   };
 
   const calculateMaterialScore = (pieces: string[]): number => {
@@ -113,8 +109,8 @@ function App() {
   };
 
   const getMaterialAdvantage = (color: 'w' | 'b'): number => {
-    const whiteCaptured = getCapturedPieces('w');
-    const blackCaptured = getCapturedPieces('b');
+    const whiteCaptured = capturedPieces.w;
+    const blackCaptured = capturedPieces.b;
     
     const whiteScore = calculateMaterialScore(whiteCaptured);
     const blackScore = calculateMaterialScore(blackCaptured);
@@ -156,7 +152,7 @@ function App() {
             <>
               <span className="pb-icon black-icon">♔</span>
               <span className="pb-name">{getModelLabel(aiSettings.blackModel)}</span>
-              {renderCapturedPieces(getCapturedPieces('b'), 'b')}
+              {renderCapturedPieces(capturedPieces.b, 'b')}
               <span className="pb-side">Black</span>
               {gameActive && game.turn() === 'b' && (
                 <span className={`pb-dot ${isThinking ? 'dot-think' : 'dot-active'}`} />
@@ -216,11 +212,12 @@ function App() {
             />
             <button
               onClick={handleStartAIGame}
-              disabled={providers.length === 0 || isLoading}
+              disabled={!aiSettings.whiteModel || !aiSettings.blackModel || isLoading}
               className="btn-start"
             >
               {isLoading ? 'Starting...' : 'Start Game'}
             </button>
+            {error && <div className="err-box">{error}</div>}
             {providers.length === 0 && (
               <div className="warn-box">
                 <strong>No providers found</strong>
@@ -234,16 +231,16 @@ function App() {
             <div className="move-list-wrap">
               <div className="ml-head">Moves</div>
               <div className="ml-body">
-                {game.history().length === 0 ? (
+                {moveHistory.length === 0 ? (
                   <div className="ml-empty">Waiting for first move...</div>
                 ) : (
-                  game.history().reduce<React.ReactElement[]>((rows, move, i) => {
+                  moveHistory.reduce<React.ReactElement[]>((rows, move, i) => {
                     if (i % 2 === 0) {
                       rows.push(
                         <div key={i} className="ml-row">
                           <span className="ml-num">{Math.floor(i / 2) + 1}.</span>
                           <span className="ml-w">{move}</span>
-                          <span className="ml-b">{game.history()[i + 1] || ''}</span>
+                          <span className="ml-b">{moveHistory[i + 1] || ''}</span>
                         </div>
                       );
                     }
@@ -271,12 +268,18 @@ function App() {
             {error && !gameResult && (
               <div className="err-box">{error}</div>
             )}
+            {!gameActive && !gameResult && (
+              <div className="status-bar">Game paused. Resume to continue this position.</div>
+            )}
 
             {/* Controls */}
             <div className="ctrl-wrap">
               <GameControls
                 onNewGame={handleNewGame}
                 onFlip={handleFlip}
+                onPauseResume={gameActive ? pauseGame : resumeGame}
+                isPaused={!gameActive}
+                gameOver={gameResult !== null}
               />
             </div>
           </div>
@@ -299,7 +302,7 @@ function App() {
             <>
               <span className="pb-icon white-icon">♚</span>
               <span className="pb-name">{getModelLabel(aiSettings.whiteModel)}</span>
-              {renderCapturedPieces(getCapturedPieces('w'), 'w')}
+              {renderCapturedPieces(capturedPieces.w, 'w')}
               <span className="pb-side">White</span>
               {gameActive && game.turn() === 'w' && (
                 <span className={`pb-dot ${isThinking ? 'dot-think' : 'dot-active'}`} />

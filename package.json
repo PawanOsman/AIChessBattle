@@ -9,7 +9,8 @@
     "build:client": "pnpm --filter client run build",
     "build:server": "pnpm --filter server run build:server",
     "start": "pnpm --filter server run start",
-    "lint": "pnpm --filter client run lint"
+    "lint": "pnpm --filter client run lint",
+    "test": "pnpm --filter server run test && pnpm --filter client run test"
   },
   "keywords": [
     "chess",

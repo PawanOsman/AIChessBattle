@@ -1,29 +1,21 @@
 const API_BASE_URL = '/api';
 
-// Retry utility function
-async function retryWithBackoff<T>(
-  fn: () => Promise<T>,
-  maxRetries: number = 3,
-  delayMs: number = 1000
-): Promise<T> {
-  let lastError: Error | undefined;
-  
-  for (let attempt = 1; attempt <= maxRetries; attempt++) {
-    try {
-      return await fn();
-    } catch (error) {
-      lastError = error instanceof Error ? error : new Error('Unknown error');
-      console.log(`⚠️ API Attempt ${attempt}/${maxRetries} failed: ${lastError.message}`);
-      
-      if (attempt < maxRetries) {
-        const delay = delayMs * attempt; // Exponential backoff
-        console.log(`⏳ Retrying in ${delay}ms...`);
-        await new Promise(resolve => setTimeout(resolve, delay));
-      }
-    }
+export class ApiError extends Error {
+  readonly status: number;
+  readonly code?: string;
+  readonly retryable: boolean;
+
+  constructor(message: string, status: number, code?: string, retryable = false) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+    this.code = code;
+    this.retryable = retryable;
   }
-  
-  throw lastError || new Error('All retry attempts failed');
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 export interface GameState {
@@ -131,7 +123,7 @@ class ApiService {
     return response.json();
   }
 
-  async getLegalMoves(gameId: string, square?: string): Promise<any[]> {
+  async getLegalMoves(gameId: string, square?: string): Promise<MoveResult['move'][]> {
     const url = square 
       ? `${API_BASE_URL}/game/moves/${gameId}/${square}`
       : `${API_BASE_URL}/game/moves/${gameId}`;
@@ -155,16 +147,61 @@ class ApiService {
     return data.models;
   }
 
-  async getAIMove(request: AIMoveRequest): Promise<AIMoveResponse> {
-    return retryWithBackoff(async () => {
+  async getAIMove(request: AIMoveRequest, signal?: AbortSignal): Promise<AIMoveResponse> {
+    // The server owns provider retries. Retrying this POST here multiplies both
+    // paid requests and latency, and can replay a turn after resetting the game.
+    const controller = new AbortController();
+    const cancel = () => controller.abort(signal?.reason);
+    if (signal?.aborted) cancel();
+    else signal?.addEventListener('abort', cancel, { once: true });
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, 180_000);
+
+    try {
       const response = await fetch(`${API_BASE_URL}/ai/move`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(request),
+        signal: controller.signal,
       });
-      if (!response.ok) throw new Error(`Failed to get AI move: ${response.statusText}`);
-      return response.json();
-    }, 3, 1000);
+      let data: unknown;
+      try {
+        data = await response.json();
+      } catch {
+        throw new ApiError('The server returned an unreadable AI response.', response.status, 'INVALID_RESPONSE');
+      }
+      if (!response.ok || (isRecord(data) && data.success === false)) {
+        const message = isRecord(data) && typeof data.details === 'string' ? data.details
+          : isRecord(data) && typeof data.error === 'string' ? data.error
+          : `Failed to get AI move (${response.status}).`;
+        throw new ApiError(message, response.status,
+          isRecord(data) && typeof data.code === 'string' ? data.code : undefined,
+          isRecord(data) && data.retryable === true);
+      }
+      if (!isRecord(data) || data.success !== true || typeof data.move !== 'string'
+        || !/^[a-h][1-8][a-h][1-8][qrbn]?$/.test(data.move)) {
+        throw new ApiError('The server did not return a valid chess move.', response.status, 'INVALID_RESPONSE');
+      }
+      return {
+        success: true,
+        provider: typeof data.provider === 'string' ? data.provider : request.provider,
+        model: typeof data.model === 'string' ? data.model : request.model,
+        move: data.move,
+        reasoning: typeof data.reasoning === 'string' ? data.reasoning : undefined,
+        confidence: typeof data.confidence === 'number' && Number.isFinite(data.confidence)
+          && data.confidence >= 0 && data.confidence <= 1 ? data.confidence : undefined,
+      };
+    } catch (err) {
+      if (signal?.aborted) throw new DOMException('AI move request cancelled.', 'AbortError');
+      if (timedOut) throw new ApiError('The AI request timed out. Resume to try this turn again.', 504, 'TIMEOUT', true);
+      throw err;
+    } finally {
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', cancel);
+    }
   }
 
   async analyzePosition(requests: AIMoveRequest[]): Promise<AIAnalysis> {

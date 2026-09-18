@@ -11,7 +11,7 @@
     "build:server": "tsc",
     "start": "pnpm run build:client && node dist/index.js",
     "start:server": "node dist/index.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "node --require ts-node/register --test tests/*.test.ts"
   },
   "license": "ISC",
   "type": "commonjs",

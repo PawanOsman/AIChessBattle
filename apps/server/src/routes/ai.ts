@@ -1,134 +1,191 @@
-import { Router } from 'express';
-import { AIService, AIMoveRequest } from '../services/aiService';
+import { ErrorRequestHandler, Request, Response, Router } from 'express';
+import { AIService, AIServiceError, AIMoveRequest } from '../services/aiService';
 
-const router: Router = Router();
-export const aiService = new AIService();
+type AIRouteService = Pick<AIService,
+  'searchModels' | 'getAvailableProviders' | 'getModels' | 'getMove'>;
 
-console.log('🔧 Registering AI routes...');
+class InvalidRequest extends Error {}
 
-// Search models (OpenRouter only)
-router.get('/models/search', (req, res) => {
-  // console.log('🔍 Search endpoint hit! Path:', req.path, 'Query:', req.query);
-  try {
-    const { q } = req.query;
-    const query = typeof q === 'string' ? q : '';
-    
-    const models = aiService.searchModels('openrouter', query);
-    // console.log(`✅ Found ${models.length} models`);
-    res.json({ models });
-  } catch (error) {
-    console.error('❌ Search error:', error);
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-    res.status(500).json({ error: 'Failed to search models', details: errorMessage });
+function readBody(body: unknown): Record<string, unknown> {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    throw new InvalidRequest('Expected a JSON object.');
   }
-});
+  return body as Record<string, unknown>;
+}
 
-// Get available AI providers with their models
-router.get('/providers', (req, res) => {
-  try {
-    const availableProviders = aiService.getAvailableProviders();
-    const providers = availableProviders.map(provider => ({
-      id: provider,
-      name: provider,
-      models: aiService.getModels(provider)
-    }));
-    res.json({ providers });
-  } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-    res.status(500).json({ error: 'Failed to get providers', details: errorMessage });
+function readString(value: unknown, field: string, maxLength: number): string {
+  if (typeof value !== 'string' || !value.trim() || value.length > maxLength) {
+    throw new InvalidRequest(`${field} must be a non-empty string of at most ${maxLength} characters.`);
   }
-});
+  return value.trim();
+}
 
-// Get AI move suggestion
-router.post('/move', async (req, res) => {
-  try {
-    const { provider, model, fen, moveHistory, playerColor, legalMoves, piecesMoves } = req.body;
+function readMoveRequest(body: Record<string, unknown>): AIMoveRequest {
+  const fen = readString(body.fen, 'fen', 200);
+  if (body.playerColor !== 'w' && body.playerColor !== 'b') {
+    throw new InvalidRequest('playerColor must be "w" or "b".');
+  }
+  const moveHistory = body.moveHistory ?? [];
+  if (!Array.isArray(moveHistory) || moveHistory.length > 2000 ||
+      moveHistory.some(move => typeof move !== 'string' || !move.trim() || move.length > 20)) {
+    throw new InvalidRequest('moveHistory must contain at most 2000 non-empty move strings (20 characters each).');
+  }
+  return {
+    fen,
+    moveHistory,
+    playerColor: body.playerColor,
+    ...(body.model !== undefined ? { model: readString(body.model, 'model', 200) } : {}),
+  };
+}
 
-    if (!provider || !fen || !playerColor) {
-      return res.status(400).json({ 
-        error: 'Missing required fields: provider, fen, playerColor' 
-      });
-    }
+function describeError(error: unknown) {
+  if (error instanceof InvalidRequest) {
+    return { status: 400, code: 'INVALID_REQUEST', retryable: false, details: error.message };
+  }
+  if (error instanceof AIServiceError) {
+    return { status: error.status, code: error.code, retryable: error.retryable, details: error.message };
+  }
+  console.error('Unexpected AI route error:', error);
+  return { status: 500, code: 'INTERNAL_ERROR', retryable: false, details: 'An unexpected AI service error occurred.' };
+}
 
-    const request: AIMoveRequest = {
-      fen,
-      moveHistory: moveHistory || [],
-      playerColor,
-      model,
-      legalMoves,
-      piecesMoves,
-    };
+function sendError(res: Response, error: unknown, message: string): void {
+  if (res.destroyed || res.headersSent) return;
+  const { status, ...failure } = describeError(error);
+  res.status(status).json({ success: false, error: message, ...failure });
+}
 
-    const response = await aiService.getMove(provider, request);
-    
-    res.json({
-      success: true,
-      provider,
-      model,
-      move: response.move,
-      reasoning: response.reasoning,
-      confidence: response.confidence,
+function requestCancellation(req: Request, res: Response) {
+  const controller = new AbortController();
+  const abort = () => controller.abort();
+  const onClose = () => {
+    if (!res.writableEnded) abort();
+  };
+  req.once('aborted', abort);
+  res.once('close', onClose);
+  if (req.aborted || res.destroyed) abort();
+  return {
+    signal: controller.signal,
+    dispose: () => {
+      req.off('aborted', abort);
+      res.off('close', onClose);
+    },
+  };
+}
+
+// Mount after the API routes so invalid JSON also gets a machine-readable error.
+export const aiJsonErrorHandler: ErrorRequestHandler = (error, req, res, next) => {
+  if (!req.path.startsWith('/api/ai/')) return next(error);
+  if (error?.type === 'entity.parse.failed' || error?.type === 'entity.too.large') {
+    const oversized = error.type === 'entity.too.large';
+    res.status(oversized ? 413 : 400).json({
+      success: false,
+      error: oversized ? 'Request body is too large.' : 'Request body must be valid JSON.',
+      code: oversized ? 'REQUEST_TOO_LARGE' : 'INVALID_JSON',
+      retryable: false,
     });
-  } catch (error) {
-    console.error('AI move error:', error);
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-    res.status(500).json({ 
-      error: 'Failed to get AI move', 
-      details: errorMessage 
-    });
+    return;
   }
-});
+  next(error);
+};
 
-// Analyze position with multiple AI providers
-router.post('/analyze', async (req, res) => {
-  try {
-    const { providers, fen, moveHistory, playerColor } = req.body;
+export function createAIRouter(service: AIRouteService): Router {
+  const router = Router();
 
-    if (!providers || !Array.isArray(providers) || !fen || !playerColor) {
-      return res.status(400).json({ 
-        error: 'Missing required fields: providers (array), fen, playerColor' 
-      });
+  router.get('/models/search', async (req, res) => {
+    try {
+      const { q } = req.query;
+      if (q !== undefined && (typeof q !== 'string' || q.length > 256)) {
+        throw new InvalidRequest('q must be a string of at most 256 characters.');
+      }
+      const models = await service.searchModels('openrouter', typeof q === 'string' ? q.trim() : '');
+      res.json({ models });
+    } catch (error) {
+      sendError(res, error, 'Failed to search models');
     }
+  });
 
-    const request: AIMoveRequest = {
-      fen,
-      moveHistory: moveHistory || [],
-      playerColor,
-    };
-
-    const results = await Promise.allSettled(
-      providers.map(async (provider: string) => {
-        const response = await aiService.getMove(provider, request);
-        return { provider, ...response };
-      })
-    );
-
-    const analysis = results
-      .filter((result): result is PromiseFulfilledResult<any> => result.status === 'fulfilled')
-      .map(result => result.value);
-
-    const errors = results
-      .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
-      .map(result => ({
-        provider: result.reason,
-        error: result.reason instanceof Error ? result.reason.message : 'Unknown error',
+  router.get('/providers', (_req, res) => {
+    try {
+      const providers = service.getAvailableProviders().map(provider => ({
+        id: provider,
+        name: provider,
+        models: service.getModels(provider),
       }));
+      res.json({ providers });
+    } catch (error) {
+      sendError(res, error, 'Failed to get providers');
+    }
+  });
 
-    res.json({
-      success: true,
-      analysis,
-      errors,
-      totalRequested: providers.length,
-      successful: analysis.length,
-    });
-  } catch (error) {
-    console.error('AI analysis error:', error);
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-    res.status(500).json({ 
-      error: 'Failed to analyze position', 
-      details: errorMessage 
-    });
-  }
-});
+  router.post('/move', async (req, res) => {
+    const cancellation = requestCancellation(req, res);
+    try {
+      const body = readBody(req.body);
+      const provider = readString(body.provider, 'provider', 100);
+      const request = readMoveRequest(body);
+      const response = await service.getMove(provider, request, cancellation.signal);
+      if (!cancellation.signal.aborted) {
+        res.json({ success: true, provider, model: request.model, ...response });
+      }
+    } catch (error) {
+      if (!cancellation.signal.aborted) sendError(res, error, 'Failed to get AI move');
+    } finally {
+      cancellation.dispose();
+    }
+  });
 
-export { router as aiRoutes };
+  router.post('/analyze', async (req, res) => {
+    const cancellation = requestCancellation(req, res);
+    try {
+      const body = readBody(req.body);
+      if (!Array.isArray(body.providers) || !body.providers.length || body.providers.length > 8) {
+        throw new InvalidRequest('providers must be an array containing between 1 and 8 provider names.');
+      }
+      const providers = body.providers.map(provider => readString(provider, 'provider', 100));
+      if (new Set(providers).size !== providers.length) {
+        throw new InvalidRequest('providers must not contain duplicate names.');
+      }
+      const request = readMoveRequest(body);
+      const results = await Promise.allSettled(
+        providers.map(async provider => ({
+          provider,
+          ...await service.getMove(provider, request, cancellation.signal),
+        })),
+      );
+      if (cancellation.signal.aborted) return;
+
+      const analysis = results.flatMap(result => result.status === 'fulfilled' ? [result.value] : []);
+      const errors = results.flatMap((result, index) => {
+        if (result.status !== 'rejected') return [];
+        const { details, ...failure } = describeError(result.reason);
+        return [{ provider: providers[index], error: details, ...failure }];
+      });
+      const allFailed = analysis.length === 0;
+      const status = allFailed
+        ? (errors.every(error => error.status === errors[0].status) ? errors[0].status : 502)
+        : 200;
+      res.status(status).json({
+        success: !allFailed,
+        analysis,
+        errors,
+        totalRequested: providers.length,
+        successful: analysis.length,
+        ...(allFailed ? {
+          error: 'All AI providers failed',
+          code: 'ANALYSIS_FAILED',
+          retryable: errors.some(error => error.retryable),
+        } : {}),
+      });
+    } catch (error) {
+      if (!cancellation.signal.aborted) sendError(res, error, 'Failed to analyze position');
+    } finally {
+      cancellation.dispose();
+    }
+  });
+
+  return router;
+}
+
+export const aiService = new AIService();
+export const aiRoutes = createAIRouter(aiService);

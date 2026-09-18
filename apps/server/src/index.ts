@@ -3,7 +3,7 @@ import express from 'express';
 import cors from 'cors';
 import path from 'path';
 import { gameRoutes } from './routes/game';
-import { aiRoutes, aiService } from './routes/ai';
+import { aiRoutes, aiService, aiJsonErrorHandler } from './routes/ai';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -18,6 +18,7 @@ app.use(express.static(path.join(__dirname, '../public')));
 // API Routes
 app.use('/api/game', gameRoutes);
 app.use('/api/ai', aiRoutes);
+app.use(aiJsonErrorHandler);
 
 console.log('📋 Routes mounted: /api/game, /api/ai');
 

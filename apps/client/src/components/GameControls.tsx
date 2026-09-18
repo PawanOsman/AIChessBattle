@@ -3,14 +3,28 @@ import React from 'react';
 interface GameControlsProps {
   onNewGame: () => void;
   onFlip: () => void;
+  onPauseResume: () => void;
+  isPaused: boolean;
+  gameOver: boolean;
 }
 
 export const GameControls: React.FC<GameControlsProps> = ({
   onNewGame,
   onFlip,
+  onPauseResume,
+  isPaused,
+  gameOver,
 }) => {
   return (
     <div className="game-controls">
+      <button
+        onClick={onPauseResume}
+        disabled={gameOver}
+        className="control-btn control-btn-secondary"
+        title={isPaused ? 'Continue from the current position' : 'Pause the game and cancel the pending move'}
+      >
+        <span>{isPaused ? 'Resume' : 'Pause'}</span>
+      </button>
       <button
         onClick={onNewGame}
         className="control-btn control-btn-primary"
